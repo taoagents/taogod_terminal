@@ -4,9 +4,8 @@ import os
 import random
 import time
 from collections import defaultdict
-from dataclasses import dataclass, is_dataclass, fields
+from dataclasses import dataclass, is_dataclass, fields, asdict
 from datetime import datetime, timedelta, timezone
-from itertools import chain
 from typing import List, Set, Dict, Any, TypeVar, Type, get_origin, Union, get_args
 
 import aiohttp
@@ -116,7 +115,7 @@ class DMData:
 class GuildData:
     guild_name: str
     channels: List[ChannelData]
-    recent_messages: List[MessageData]
+    channel_name_to_messages: Dict[str, List[MessageData]]
 
 @dataclass
 class DiscordData:
@@ -338,7 +337,7 @@ class DiscordAPI:
 
         return formatted_messages
 
-    async def process_channel_messages(self, channel, channel_name=None):
+    async def process_channel_messages(self, channel, channel_name=None) -> List[MessageData]:
         """Process messages from a single channel"""
         try:
             if not channel or 'id' not in channel:
@@ -367,41 +366,30 @@ class DiscordAPI:
                     print(f"Error processing message in channel {channel.get('name', 'Unknown')}: {e}")
                     continue
 
-            return recent_messages
+            return [
+                dict_to_dataclass_or_basemodel(MessageData, message)
+                for message in recent_messages
+            ]
 
         except Exception as e:
             print(f"Error processing channel {channel.get('name', 'Unknown')}: {e}")
             return []
 
-    async def get_last_24_hours_messages(self, guild_id) -> List[MessageData]:
+    async def get_last_24_hours_messages(self, guild_id) -> Dict[str, List[MessageData]]:
         """Get recent messages concurrently from all channels"""
         channels = await self.get_channels(guild_id)
 
         # Process channels sequentially
-        channel_id_to_messages = {}
-        for channel in channels:
+        channel_name_to_messages: Dict[str, List[MessageData]] = {}
+        for channel in channels[:5]:
             print(f"\nProcessing channel {channel['name']} (id {channel['id']})...")
-            channel_id_to_messages[channel["id"]] = await self.process_channel_messages(channel)
+            channel_name_to_messages[channel["name"]] = await self.process_channel_messages(channel)
 
             sleep_duration_s = random.randint(1, 15)
             print(f"Sleeping for {sleep_duration_s}s...")
             time.sleep(sleep_duration_s)
 
-        with open(f"guild_{guild_id}_channel_messages.json", "w") as f:
-            json.dump(channel_id_to_messages, f)
-
-        channel_messages = list(channel_id_to_messages.values())
-
-        # Flatten the list of messages and filter out exceptions
-        all_messages_raw = list(chain.from_iterable(
-            messages for messages in channel_messages if isinstance(messages, list)
-        ))
-        all_messages: List[MessageData] = [
-            dict_to_dataclass_or_basemodel(MessageData, message)
-            for message in all_messages_raw
-        ]
-
-        return all_messages
+        return channel_name_to_messages
 
     async def process_dm_channel(self, channel) -> List[DMData]:
         """Process messages from a single DM channel"""
@@ -482,7 +470,7 @@ class DiscordAPI:
             channels = await self.get_channels(guild['id'])
             await asyncio.sleep(1)
 
-            last_24_hours: List[MessageData] = await self.get_last_24_hours_messages(guild['id'])
+            channel_name_to_messages = await self.get_last_24_hours_messages(guild['id'])
 
             guild_data = GuildData(
                 guild_name=guild['name'],
@@ -492,21 +480,20 @@ class DiscordAPI:
                         type=channel.get('type'),
                     ) for channel in channels
                 ],
-                recent_messages=last_24_hours,
+                channel_name_to_messages=channel_name_to_messages,
             )
-            import ipdb; ipdb.set_trace()
             return guild_data
         except Exception as e:
             print(f"Error processing guild {guild['name']}: {e}")
             return GuildData(
                 guild_name=guild['name'],
                 channels=[],
-                recent_messages=[]
+                channel_name_to_messages={},
             )
 
 
 async def fetch_discord_info(
-        output_file: str = OUTPUT_FILE
+        output_file: str = None
 ) -> DiscordData:
     user_id = DISCORD_USER_ID
     print(f"User ID: {user_id}")
@@ -536,9 +523,10 @@ async def fetch_discord_info(
             dms=filtered_dms,
         )
 
-        with open(output_file, "w") as f:
-            json.dump(vars(discord_data), f)
-        print(f"Saved messages to {output_file}")
+        if output_file:
+            with open(output_file, "w") as f:
+                json.dump(convert_to_obj(discord_data), f)
+            print(f"Saved messages to {output_file}")
 
         return discord_data
 
@@ -547,4 +535,4 @@ async def fetch_discord_info(
 
 
 if __name__ == "__main__":
-    asyncio.run(fetch_discord_info())
+    asyncio.run(fetch_discord_info(OUTPUT_FILE))

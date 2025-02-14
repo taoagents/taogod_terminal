@@ -1,20 +1,24 @@
 import argparse
+import asyncio
 import json
 import os
 import time
+from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from pprint import pprint
 from typing import Dict
 from typing import List
 
 import anthropic
-
+from taogod_terminal.adapters.discord_adapter import fetch_discord_info
 from taogod_terminal.adapters.github_roadmaps import subnet_roadmaps
 
+from taogod_terminal.adapters.discord_adapter import DiscordData, \
+    MessageData, dict_to_dataclass_or_basemodel, convert_to_obj
+
+
 MAX_DISCORD_MESSAGES = 2000
-subnet_channel_id_map = {}
 
 PROMPT_TEMPLATE = """You are a technical writer creating tweets about cryptocurrency and AI developments.
         
@@ -59,25 +63,22 @@ class Tweet:
             f"Based on:\n{messages}\n"
         )
 
-def get_subnet_from_message(message: Dict) -> int:
+def get_subnet_from_channel_name(channel_name: str) -> int:
     """Get the subnet name from a message"""
-    return int(message['channel_name'].split('・')[-1])
+    return int(channel_name.split('・')[-1])
 
 
-def generate_tweets_no_simsearch(subnet_number: int, raw_messages_json) -> List[Tweet]:
-    channel_id = subnet_channel_id_map[subnet_number]
-    raw_messages = raw_messages_json[channel_id]
-
+def generate_tweets_no_simsearch(subnet_number: int, messages: List[MessageData]) -> List[Tweet]:
     readme_context = subnet_roadmaps[subnet_number]
     messages_context = ""
 
-    truncated_messages = raw_messages[:MAX_DISCORD_MESSAGES]
+    truncated_messages: List[MessageData] = messages[:MAX_DISCORD_MESSAGES]
     print(f"Adding {len(truncated_messages)} messages for subnet {subnet_number}...")
     for message in truncated_messages:
-        if datetime.fromisoformat(message["timestamp"]) > datetime.now(timezone.utc) - timedelta(days=3):
+        if datetime.fromisoformat(message.timestamp) > datetime.now(timezone.utc) - timedelta(days=3):
             messages_context += f"""
-                "message": {message['content']}
-                "timestamp": {message['timestamp']}
+                "message": {message.content}
+                "timestamp": {message.timestamp}
             """
         print(
             f"Template: {len(PROMPT_TEMPLATE)}, messages: {len(messages_context)}, readme: {len(readme_context)}"
@@ -139,60 +140,53 @@ def convert_generated_tweets_into_structured_output(tweets: List[Tweet]):
         for tweet in tweets
     ]
 
-def no_simsearch_loop(json_path: Path, output_path: Path = None) -> None:
+def no_simsearch_loop(discord_data: DiscordData, output_path: Path = None) -> None:
     print("Output path is", output_path)
     script_dir = os.path.dirname(os.path.abspath(__file__))
 
-    # Read and display first few lines of discord.json
-    with open(json_path) as f:
-        data = json.load(f)
+    channel_name_to_messages: Dict[str, List[MessageData]] = discord_data.guilds[0].channel_name_to_messages
 
-        for i in range(len(list(data))):
-            messages_in_channel = data[list(data)[i]]
-            channel_id = list(data)[i]
+    tweets_by_subnet: Dict[int, List[Tweet]] = defaultdict(list)
+    for channel_name, messages in channel_name_to_messages.items():
+        if "ex" in channel_name:
+            continue
 
-            if len(messages_in_channel) > 0:
-                channel_name = messages_in_channel[0]['channel_name']
+        print(f"Trying to parse subnet with channel name '{channel_name}'...")
+        subnet_id = get_subnet_from_channel_name(channel_name)
 
-                if 'ex' in channel_name:
-                    continue
-
-                channel_subnet_id = get_subnet_from_message(messages_in_channel[0])
-
-                subnet_channel_id_map[channel_subnet_id] = channel_id
-        
-        print("Generated channel map:")
-        pprint(subnet_channel_id_map, indent=2)
-        print("\n\n")
-        existing_subnets = subnet_roadmaps.keys()
-        tweets_by_subnet = {}
-
-        for subnet in existing_subnets:
-            if subnet not in subnet_channel_id_map:
-                print(f"Skipping subnet {subnet} because there is no associated channel map")
-                continue
-
-            print(f"Generating tweets for subnet {subnet}")
-            tweets = generate_tweets_no_simsearch(subnet, data)
+        if len(messages) > 0:
+            print(f"Generating tweets for subnet {subnet_id}")
+            tweets = generate_tweets_no_simsearch(subnet_id, messages)
             print([tweet.generated_tweet for tweet in tweets])
-            tweets_by_subnet[subnet] = convert_generated_tweets_into_structured_output(tweets)
-
+            tweets_by_subnet[subnet_id] = tweets
+        else:
+            print(f"No messages exist for subnet {subnet_id}")
 
     if output_path is None:
         output_path = os.path.join(script_dir, 'generated_tweets.json')
 
     with open(output_path, 'w') as f:
-        json.dump(tweets_by_subnet, f, indent=2)
+        json.dump(convert_to_obj(tweets_by_subnet), f, indent=2)
     print(f"Results written to {output_path}")
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    parser.add_argument("discord_file", type=Path, help="Path to Discord JSON file")
+    parser.add_argument("--discord_file", type=Path, help="Path to Discord JSON file")
     parser.add_argument("--output", type=Path, help="Output file for generated tweets")
     return parser.parse_args()
 
 
-if __name__ == "__main__":
+async def main() -> None:
     args = parse_args()
-    no_simsearch_loop(args.discord_file, args.output)
+
+    if args.discord_file:
+        with open(args.discord_file, "r") as f:
+            discord_data = dict_to_dataclass_or_basemodel(DiscordData, json.load(f))
+    else:
+        discord_data = await fetch_discord_info()
+
+    no_simsearch_loop(discord_data, args.output)
+
+if __name__ == "__main__":
+    asyncio.run(main())
