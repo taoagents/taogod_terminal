@@ -140,7 +140,7 @@ def convert_generated_tweets_into_structured_output(tweets: List[Tweet]):
         for tweet in tweets
     ]
 
-def no_simsearch_loop(discord_data: DiscordData, output_path: Path = None) -> None:
+def no_simsearch_loop(discord_data: DiscordData, output_path: Path = None) -> Dict[int, List[Tweet]]:
     print("Output path is", output_path)
     script_dir = os.path.dirname(os.path.abspath(__file__))
 
@@ -168,6 +168,7 @@ def no_simsearch_loop(discord_data: DiscordData, output_path: Path = None) -> No
     with open(output_path, 'w') as f:
         json.dump(convert_to_obj(tweets_by_subnet), f, indent=2)
     print(f"Results written to {output_path}")
+    return tweets_by_subnet
 
 
 def parse_args() -> argparse.Namespace:
@@ -177,7 +178,7 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-async def main() -> None:
+async def main() -> Dict[int, List[Tweet]]:
     args = parse_args()
 
     if args.discord_file:
@@ -186,7 +187,7 @@ async def main() -> None:
     else:
         discord_data = await fetch_discord_info()
 
-    no_simsearch_loop(discord_data, args.output)
+    return no_simsearch_loop(discord_data, args.output)
 
 if __name__ == "__main__":
     asyncio.run(main())
