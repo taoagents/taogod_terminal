@@ -114,7 +114,7 @@ def generate_tweets_no_simsearch(subnet_number: int, messages: List[MessageData]
                 ]
             )
 
-            for tweet in response.content[0].text.split("\n"):
+            for tweet in response.content[0].text.split("\n\n")[:-1]:
                 tweets.append(Tweet(
                     generated_tweet=tweet,
                     topic="no topic provided",
