@@ -1,6 +1,7 @@
 import argparse
 import asyncio
 import json
+import logging
 import os
 import random
 import time
@@ -23,6 +24,20 @@ consumer_secret = os.environ.get("TWITTER_API_SECRET")
 
 oauth1_access_token = os.getenv("TWITTER_OAUTH1_ACCESS_TOKEN")
 oauth1_access_token_secret = os.getenv("TWITTER_OAUTH1_ACCESS_TOKEN_SECRET")
+
+logging.basicConfig(
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    level=logging.INFO,
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+logger = logging.getLogger(__name__)
+
+EST = pytz.timezone("US/Eastern")
+DAY_START_HOUR = 10  # 10 AM
+DAY_END_HOUR = 22  # 10 PM
+TWEET_FREQ = timedelta(minutes=60)
+SENT_TWEETS_FILE = Path("sent_tweets.json")
+TWEETS_DB_REFRESH_DURATION = timedelta(hours=12)
 
 
 def post_tweet(text: str) -> None:
@@ -47,19 +62,11 @@ def post_tweet(text: str) -> None:
             "Request returned an error: {} {}".format(response.status_code, response.text)
         )
 
-    print("Response code: {}".format(response.status_code))
+    logger.info("Response code: {}".format(response.status_code))
 
     # Saving the response as JSON
     json_response = response.json()
-    print(json.dumps(json_response, indent=4, sort_keys=True))
-
-
-EST = pytz.timezone("US/Eastern")
-DAY_START_HOUR = 10  # 10 AM
-DAY_END_HOUR = 22  # 10 PM
-TWEET_FREQ = timedelta(minutes=60)
-SENT_TWEETS_FILE = Path("sent_tweets.json")
-TWEETS_DB_REFRESH_DURATION = timedelta(hours=12)
+    logger.info(json.dumps(json_response, indent=4, sort_keys=True))
 
 
 def parse_args() -> argparse.Namespace:
@@ -72,7 +79,7 @@ async def main(tweets: Optional[Path] = None) -> None:
 
     tweets_db: Dict[int, List[Tweet]]
     if tweets:
-        print(f"Loading old tweets DB from {tweets}")
+        logger.info(f"Loading old tweets DB from {tweets}")
         with open(tweets, "r") as f:
             tweets_db_raw = json.load(f)
             tweets_db = {
@@ -83,7 +90,7 @@ async def main(tweets: Optional[Path] = None) -> None:
                 for sn_id, tweets in tweets_db_raw.items()
             }
     else:
-        print("Generating new tweets DB from Discord scraper:")
+        logger.info("Generating new tweets DB from Discord scraper:")
         tweets_db = await summarizer_simple.main()
     last_tweets_db_refresh = time.time()
 
@@ -99,7 +106,7 @@ async def main(tweets: Optional[Path] = None) -> None:
         now = datetime.now(EST)
 
         if time.time() - last_tweets_db_refresh > TWEETS_DB_REFRESH_DURATION.total_seconds():
-            print("Stale DB timeout has passed, regenerating tweets DB from Discord scraper:")
+            logger.info("Stale DB timeout has passed, regenerating tweets DB from Discord scraper:")
             tweets_db = await summarizer_simple.main()
             last_tweets_db_refresh = time.time()
 
@@ -109,11 +116,11 @@ async def main(tweets: Optional[Path] = None) -> None:
 
                 message: Tweet = random.choice(tweets_db[sn_id])
                 while message in sent_tweets or not message.generated_tweet:
-                    print(f"message '{message}' invalid; choosing new message")
+                    logger.info(f"message '{message}' invalid; choosing new message")
                     message = random.choice(tweets_db[sn_id])
-                print(f"Chose message '{message}'")
+                logger.info(f"Chose message '{message}'")
 
-                print(f"Creating new post: '{message.generated_tweet}'")
+                logger.info(f"Creating new post: '{message.generated_tweet}'")
                 post_tweet(message.generated_tweet)
                 sent_tweets.append(message.generated_tweet)
                 with open(SENT_TWEETS_FILE, "w") as f:
@@ -123,13 +130,13 @@ async def main(tweets: Optional[Path] = None) -> None:
 
             remaining_time = TWEET_FREQ - (datetime.now() - datetime.fromtimestamp(time_posted))
             next_post_time = datetime.now() + remaining_time
-            print(f"Next post will be made at:", next_post_time.strftime("%Y-%m-%d %H:%M:%S"))
+            logger.info(f"Next post will be made at: {next_post_time.strftime('%Y-%m-%d %H:%M:%S')}")
         else:
             next_post_time = datetime.now(EST).replace(hour=DAY_START_HOUR, minute=0, second=0, microsecond=0)
             if now.hour >= DAY_END_HOUR:
                 next_post_time += timedelta(days=1)
-            print(f"Outside posting hours. Next post will be made at:", next_post_time.strftime("%Y-%m-%d %H:%M:%S"))
-            time.sleep(60)
+            logger.info(f"Outside posting hours. Next post will be made at: {next_post_time.strftime('%Y-%m-%d %H:%M:%S')}")
+        time.sleep(60)
 
 
 if __name__ == "__main__":

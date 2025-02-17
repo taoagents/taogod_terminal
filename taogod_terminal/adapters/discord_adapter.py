@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 import os
 import random
 import time
@@ -13,6 +14,9 @@ from dotenv import load_dotenv
 from pydantic import BaseModel
 
 T = TypeVar('T')
+
+logger = logging.getLogger(__name__)
+
 
 # ================== Utils to for dataclass <-> dict parsing ===========================
 def dict_to_dataclass_or_basemodel(cls: Type[T], data: Dict[str, Any]) -> T:
@@ -225,11 +229,11 @@ class DiscordAPI:
                         return await response.json()
 
                 except (aiohttp.ClientError, asyncio.TimeoutError) as e:
-                    print(f"v10 Attempt {attempt + 1} failed: {str(e)}")
+                    logger.info(f"v10 Attempt {attempt + 1} failed: {str(e)}")
                     if attempt < 2:
                         await asyncio.sleep(10)
                     else:
-                        print("Falling back to v9 API...")
+                        logger.info("Falling back to v9 API...")
                         break
 
             # If v10 failed, try v9
@@ -257,7 +261,7 @@ class DiscordAPI:
                     return await response.json()
 
             except Exception as e:
-                print(f"v9 API attempt also failed: {str(e)}")
+                logger.info(f"v9 API attempt also failed: {str(e)}")
                 return []
 
 
@@ -273,7 +277,7 @@ class DiscordAPI:
         try:
             channels = await self._make_request(f"/guilds/{guild_id}/channels")
             if not channels:
-                print(f"No channels found for guild {guild_id}")
+                logger.info(f"No channels found for guild {guild_id}")
                 return []
 
             # Filter out inaccessible channels early
@@ -283,17 +287,17 @@ class DiscordAPI:
             ]
 
             if not accessible_channels:
-                print(f"No accessible channels found in guild {guild_id}")
+                logger.info(f"No accessible channels found in guild {guild_id}")
                 return []
 
             relevant_channels = accessible_channels
             time.sleep(3)
 
-            print(f"Found {len(relevant_channels)} relevant channels out of {len(accessible_channels)} total")
+            logger.info(f"Found {len(relevant_channels)} relevant channels out of {len(accessible_channels)} total")
             return relevant_channels
 
         except Exception as e:
-            print(f"Error in get_channels: {e}")
+            logger.info(f"Error in get_channels: {e}")
             return []
 
     async def get_messages(self, channel_id):
@@ -314,15 +318,15 @@ class DiscordAPI:
         }
 
         while True:
-            print(f"Making request for messages for channel {channel_id}...")
+            logger.info(f"Making request for messages for channel {channel_id}...")
             messages = await self._make_request(f"/channels/{channel_id}/messages", params=params)
             if not messages:
                 break
 
             all_messages.extend(messages)
-            print(f"Received {len(messages)}, running total of messages is {len(all_messages)}")
+            logger.info(f"Received {len(messages)}, running total of messages is {len(all_messages)}")
             if len(messages) < 100:
-                print(f"Scapred all messages for channel {channel_id}")
+                logger.info(f"Scapred all messages for channel {channel_id}")
                 break
 
             params["after"] = messages[-1]['id']
@@ -343,9 +347,9 @@ class DiscordAPI:
             if not channel or 'id' not in channel:
                 return []
 
-            print(f"Processing channel messages for channel {channel['name']}...")
+            logger.info(f"Processing channel messages for channel {channel['name']}...")
             messages = await self.get_messages(channel['id'])
-            print(f"Obtained {len(messages)} messages")
+            logger.info(f"Obtained {len(messages)} messages")
             if not messages:
                 return []
 
@@ -363,7 +367,7 @@ class DiscordAPI:
                         })
 
                 except Exception as e:
-                    print(f"Error processing message in channel {channel.get('name', 'Unknown')}: {e}")
+                    logger.info(f"Error processing message in channel {channel.get('name', 'Unknown')}: {e}")
                     continue
 
             return [
@@ -372,7 +376,7 @@ class DiscordAPI:
             ]
 
         except Exception as e:
-            print(f"Error processing channel {channel.get('name', 'Unknown')}: {e}")
+            logger.info(f"Error processing channel {channel.get('name', 'Unknown')}: {e}")
             return []
 
     async def get_last_24_hours_messages(self, guild_id) -> Dict[str, List[MessageData]]:
@@ -381,12 +385,12 @@ class DiscordAPI:
 
         # Process channels sequentially
         channel_name_to_messages: Dict[str, List[MessageData]] = {}
-        for channel in channels[:5]:
-            print(f"\nProcessing channel {channel['name']} (id {channel['id']})...")
+        for channel in channels:
+            logger.info(f"\nProcessing channel {channel['name']} (id {channel['id']})...")
             channel_name_to_messages[channel["name"]] = await self.process_channel_messages(channel)
 
             sleep_duration_s = random.randint(1, 15)
-            print(f"Sleeping for {sleep_duration_s}s...")
+            logger.info(f"Sleeping for {sleep_duration_s}s...")
             time.sleep(sleep_duration_s)
 
         return channel_name_to_messages
@@ -396,12 +400,12 @@ class DiscordAPI:
         try:
             # Validate channel object
             if not channel or not isinstance(channel, dict) or 'id' not in channel:
-                print(f"Invalid channel object: {channel}")
+                logger.info(f"Invalid channel object: {channel}")
                 return []
 
             # Check if it's a DM channel (type 1) and not already marked inaccessible
             if channel.get('type') != 1:
-                print(f"Skipping non-DM channel type: {channel.get('type')}")
+                logger.info(f"Skipping non-DM channel type: {channel.get('type')}")
                 return []
 
             # Fetch messages with error handling
@@ -409,12 +413,12 @@ class DiscordAPI:
                 url = f"{self.base_url}/channels/{channel['id']}/messages"
                 messages = await self._make_request(f"/channels/{channel['id']}/messages")
             except Exception as e:
-                print(f"Failed to fetch messages for channel {channel['id']}: {e}")
+                logger.info(f"Failed to fetch messages for channel {channel['id']}: {e}")
                 self.inaccessible_channels.add(channel['id'])
                 return []
 
             if not messages:
-                print(f"No messages found in channel {channel['id']}")
+                logger.info(f"No messages found in channel {channel['id']}")
                 return []
 
             # Filter messages from last 12 days
@@ -427,10 +431,10 @@ class DiscordAPI:
                     if msg_time > thirty_mins_ago:
                         recent_messages.append(msg)
                 except (ValueError, KeyError) as e:
-                    print(f"Error parsing message timestamp: {e}")
+                    logger.info(f"Error parsing message timestamp: {e}")
                     continue
 
-            print(f"Found {len(recent_messages)} recent messages in channel {channel['id']}")
+            logger.info(f"Found {len(recent_messages)} recent messages in channel {channel['id']}")
             return [
                 dict_to_dataclass_or_basemodel(DMData, message)
                 for message in recent_messages
@@ -438,15 +442,15 @@ class DiscordAPI:
 
         except Exception as e:
             channel_id = channel.get('id', 'unknown') if isinstance(channel, dict) else 'unknown'
-            print(f"Error processing DM channel {channel_id}: {e}")
+            logger.info(f"Error processing DM channel {channel_id}: {e}")
             if isinstance(channel, dict) and 'id' in channel:
                 self.inaccessible_channels.add(channel['id'])
             return []
 
     async def get_private_dms(self) -> List[DMData]:
-        print("Fetching DM channels...")
+        logger.info("Fetching DM channels...")
         dm_channels = await self._make_request("/users/@me/channels")
-        print(f"Found {len(dm_channels)} DM channels")
+        logger.info(f"Found {len(dm_channels)} DM channels")
 
         all_dms = []
         for channel in dm_channels:
@@ -454,19 +458,19 @@ class DiscordAPI:
             messages: List[DMData] = await self.process_dm_channel(channel)
 
             if not messages:
-                print("No messages found in this channel")
+                logger.info("No messages found in this channel")
                 continue
 
             all_dms.extend(messages)
-            print(f"Total messages collected so far: {len(all_dms)}")
+            logger.info(f"Total messages collected so far: {len(all_dms)}")
 
-        print(f"\nFinal total messages across all DMs: {len(all_dms)}")
+        logger.info(f"\nFinal total messages across all DMs: {len(all_dms)}")
         return all_dms
 
     async def process_guild(self, guild) -> GuildData:
         """Process a single guild's data"""
         try:
-            print(f"Processing guild: {guild['name']}")
+            logger.info(f"Processing guild: {guild['name']}")
             channels = await self.get_channels(guild['id'])
             await asyncio.sleep(1)
 
@@ -484,7 +488,7 @@ class DiscordAPI:
             )
             return guild_data
         except Exception as e:
-            print(f"Error processing guild {guild['name']}: {e}")
+            logger.info(f"Error processing guild {guild['name']}: {e}")
             return GuildData(
                 guild_name=guild['name'],
                 channels=[],
@@ -496,7 +500,7 @@ async def fetch_discord_info(
         output_file: str = None
 ) -> DiscordData:
     user_id = DISCORD_USER_ID
-    print(f"User ID: {user_id}")
+    logger.info(f"User ID: {user_id}")
     discord_api = DiscordAPI(DISCORD_USER_TOKEN, user_id)
     await discord_api.connect()
 
@@ -506,11 +510,11 @@ async def fetch_discord_info(
 
         # Get guilds
         guilds = await discord_api.get_guilds()
-        print("guilds", guilds)
+        logger.info(f"guilds {guilds}")
 
         # Get DMs with filtered fields
         filtered_dms: List[DMData] = await discord_api.get_private_dms()
-        print("filtered_dms", filtered_dms)
+        logger.info(f"filtered_dms {filtered_dms}")
 
         # Process each guild
         guild_data: List[GuildData] = await asyncio.gather(*[
@@ -526,7 +530,7 @@ async def fetch_discord_info(
         if output_file:
             with open(output_file, "w") as f:
                 json.dump(convert_to_obj(discord_data), f)
-            print(f"Saved messages to {output_file}")
+            logger.info(f"Saved messages to {output_file}")
 
         return discord_data
 
