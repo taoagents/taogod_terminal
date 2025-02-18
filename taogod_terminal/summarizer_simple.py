@@ -8,7 +8,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Dict
+from typing import Dict, Optional
 from typing import List
 
 import anthropic
@@ -66,9 +66,14 @@ class Tweet:
             f"Based on:\n{messages}\n"
         )
 
-def get_subnet_from_channel_name(channel_name: str) -> int:
+def get_subnet_from_channel_name(channel_name: str) -> Optional[int]:
     """Get the subnet name from a message"""
-    return int(channel_name.split('・')[-1])
+    try:
+        subnet_id = int(channel_name.split('・')[-1])
+        return subnet_id
+    except ValueError as e:
+        logger.error(f"Failed parsing channel {channel_name} with error {e}")
+        return None
 
 
 def generate_tweets_no_simsearch(subnet_number: int, messages: List[MessageData]) -> List[Tweet]:
@@ -156,6 +161,8 @@ def no_simsearch_loop(discord_data: DiscordData, output_path: Path = None) -> Di
 
         logger.info(f"Trying to parse subnet with channel name '{channel_name}'...")
         subnet_id = get_subnet_from_channel_name(channel_name)
+        if not subnet_id:
+            continue
 
         if len(messages) > 0:
             logger.info(f"Generating tweets for subnet {subnet_id}")
