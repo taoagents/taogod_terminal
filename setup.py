@@ -52,6 +52,9 @@ setup(
         "ipdb",
         "ipython",
         "coverage",
+        "pytest",
+        "pytest-asyncio",
+        "pytz",
     ],
     classifiers=[
         "Development Status :: 3 - Alpha",
