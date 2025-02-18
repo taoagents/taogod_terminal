@@ -5,68 +5,17 @@ import os
 import random
 import time
 from collections import defaultdict
-from dataclasses import dataclass, is_dataclass, fields, asdict
 from datetime import datetime, timedelta, timezone
-from typing import List, Set, Dict, Any, TypeVar, Type, get_origin, Union, get_args
+from typing import List, Set, Dict, Optional
 
 import aiohttp
 from dotenv import load_dotenv
-from pydantic import BaseModel
-
-T = TypeVar('T')
+from taogod_terminal.helpers import convert_to_obj, dict_to_dataclass_or_basemodel
+from taogod_terminal.adapters.discord.base_adapter import BaseDiscordAdapter
+from taogod_terminal.adapters.discord.base_adapter import UserData, MessageData, DMData, GuildData, \
+    DiscordData, ChannelData
 
 logger = logging.getLogger(__name__)
-
-
-# ================== Utils to for dataclass <-> dict parsing ===========================
-def dict_to_dataclass_or_basemodel(cls: Type[T], data: Dict[str, Any]) -> T:
-    """Recursively converts a dictionary into a dataclass or BaseModel instance, handling nested and optional fields."""
-    if is_dataclass(cls):
-        init_kwargs = {}
-        for field in fields(cls):
-            field_name = field.name
-            field_type = field.type
-            field_value = data.get(field_name, None)  # Default to None if key is missing
-
-            # Resolve Optional and Union types
-            if get_origin(field_type) is Union:
-                # Handle Optional (Union[X, None]) by extracting the actual type
-                actual_types = get_args(field_type)
-                if len(actual_types) == 2 and type(None) in actual_types:
-                    actual_type = next(t for t in actual_types if t is not type(None))
-                else:
-                    actual_type = None
-            else:
-                actual_type = field_type
-
-            # Check if the actual type is a dataclass or BaseModel
-            if actual_type and isinstance(actual_type, type):
-                if is_dataclass(actual_type):
-                    init_kwargs[field_name] = dict_to_dataclass_or_basemodel(actual_type, field_value) if field_value else None
-                elif issubclass(actual_type, BaseModel):
-                    init_kwargs[field_name] = actual_type(**field_value) if field_value else None
-                else:
-                    init_kwargs[field_name] = field_value
-            else:
-                init_kwargs[field_name] = field_value
-
-        return cls(**init_kwargs)
-    elif issubclass(cls, BaseModel):
-        return cls(**data)
-    else:
-        raise TypeError(f"{cls} is neither a dataclass nor a BaseModel.")
-
-
-def convert_to_obj(data: Any) -> Any:
-    if is_dataclass(data):
-        return {k: convert_to_obj(v) for k, v in asdict(data).items()}
-    elif isinstance(data, BaseModel):
-        return {k: convert_to_obj(v) for k, v in data.dict().items()}
-    elif isinstance(data, list):
-        return [convert_to_obj(item) for item in data]
-    elif isinstance(data, dict):
-        return {k: convert_to_obj(v) for k, v in data.items()}
-    return data
 
 
 load_dotenv()
@@ -88,44 +37,6 @@ DISCORD_USER_TOKEN = os.environ["DISCORD_USER_TOKEN"]
 DISCORD_USER_ID = os.environ["DISCORD_USER_ID"]
 
 OUTPUT_FILE = "fetch_discord_info_results.json"
-
-
-@dataclass
-class UserData:
-    email: str
-    global_name: str  # username
-    id: str
-    username: str
-
-@dataclass
-class ChannelData:
-    name: str
-    type: int  # idk
-
-@dataclass
-class MessageData:
-    author_name: str
-    channel_name: str
-    content: str
-    timestamp: str
-
-@dataclass
-class DMData:
-    content: str
-    author_name: str
-    timestamp: str
-
-@dataclass
-class GuildData:
-    guild_name: str
-    channels: List[ChannelData]
-    channel_name_to_messages: Dict[str, List[MessageData]]
-
-@dataclass
-class DiscordData:
-    user_data: UserData
-    dms: List[DMData]  # unused
-    guilds: List[GuildData]
 
 
 class DiscordAPI:
@@ -536,6 +447,42 @@ async def fetch_discord_info(
 
     finally:
         await discord_api.close()
+
+def get_subnet_from_channel_name(channel_name: str) -> Optional[int]:
+    """Get the subnet name from a message"""
+    try:
+        subnet_id = int(channel_name.split('・')[-1])
+        return subnet_id
+    except ValueError as e:
+        logger.error(f"Failed parsing channel {channel_name} with error {e}")
+        return None
+
+class V1DiscordAdapter(BaseDiscordAdapter):
+    async def reload_data(self) -> None:
+        self.discord_data: DiscordData = await fetch_discord_info()
+
+        channel_name_to_messages: Dict[str, List[MessageData]] = self.discord_data.guilds[0].channel_name_to_messages
+
+        self.subnet_id_to_messages: Dict[int, List[MessageData]] = {}
+        for channel_name, messages in channel_name_to_messages.items():
+            if "ex" in channel_name:
+                continue
+
+            logger.info(f"Trying to parse subnet with channel name '{channel_name}'...")
+            subnet_id = get_subnet_from_channel_name(channel_name)
+            if not subnet_id:
+                continue
+
+            if len(messages) > 0:
+                self.subnet_id_to_messages[subnet_id] = messages
+            else:
+                logger.info(f"No messages exist for subnet {subnet_id}")
+
+    def get_subnet_messages(self, subnet_id: int) -> List[MessageData]:
+        return self.subnet_id_to_messages[subnet_id]
+
+    def get_subnet_message_map(self) -> Dict[int, List[MessageData]]:
+        return self.subnet_id_to_messages
 
 
 if __name__ == "__main__":

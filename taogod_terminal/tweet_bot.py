@@ -14,8 +14,9 @@ from dotenv import load_dotenv
 from requests_oauthlib import OAuth1Session
 
 from taogod_terminal import summarizer_simple
-from taogod_terminal.adapters.discord_adapter import dict_to_dataclass_or_basemodel
 from taogod_terminal.summarizer_simple import Tweet
+
+from taogod_terminal.helpers import dict_to_dataclass_or_basemodel
 
 load_dotenv()
 
