@@ -72,7 +72,7 @@ def get_subnet_from_channel_name(channel_name: str) -> int:
 
 
 def generate_tweets_no_simsearch(subnet_number: int, messages: List[MessageData]) -> List[Tweet]:
-    readme_context = subnet_roadmaps[subnet_number]
+    readme_context = subnet_roadmaps[subnet_number] if subnet_number in subnet_roadmaps else ""
     messages_context = ""
 
     truncated_messages: List[MessageData] = messages[:MAX_DISCORD_MESSAGES]
