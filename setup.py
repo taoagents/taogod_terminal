@@ -51,6 +51,7 @@ setup(
         "requests_oauthlib==2.0.0",
         "ipdb",
         "ipython",
+        "coverage",
     ],
     classifiers=[
         "Development Status :: 3 - Alpha",
