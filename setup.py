@@ -55,6 +55,7 @@ setup(
         "pytest",
         "pytest-asyncio",
         "pytz",
+        "pytest-cov",
     ],
     classifiers=[
         "Development Status :: 3 - Alpha",
