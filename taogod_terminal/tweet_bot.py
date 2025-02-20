@@ -114,6 +114,9 @@ async def main(tweets: Optional[Path] = None) -> None:
             if time.time() - time_posted > TWEET_FREQ.total_seconds():
                 sn_id = random.choice(list(tweets_db.keys()))
 
+                if len(tweets_db[sn_id]) == 0:
+                    continue
+
                 message: Tweet = random.choice(tweets_db[sn_id])
                 while message in sent_tweets or not message.generated_tweet:
                     logger.info(f"message '{message}' invalid; choosing new message")
