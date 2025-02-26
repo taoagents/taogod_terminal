@@ -51,6 +51,10 @@ setup(
         "requests_oauthlib==2.0.0",
         "ipdb",
         "ipython",
+        "coverage",
+        "pytest",
+        "pytest-asyncio",
+        "pytz",
     ],
     classifiers=[
         "Development Status :: 3 - Alpha",
