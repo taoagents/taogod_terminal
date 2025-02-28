@@ -12,12 +12,10 @@ from typing import Dict, Optional
 from typing import List
 
 import anthropic
-from taogod_terminal.adapters.discord_adapter import fetch_discord_info
-from taogod_terminal.adapters.github_roadmaps import subnet_roadmaps
-
-from taogod_terminal.adapters.discord_adapter import DiscordData, \
-    MessageData, dict_to_dataclass_or_basemodel, convert_to_obj
-
+from taogod_terminal.adapters.discord.v1_adapter import V1DiscordAdapter, MessageData, convert_to_obj
+from taogod_terminal.adapters.discord.base_adapter import BaseDiscordAdapter
+from taogod_terminal.adapters.github.base_adapter import BaseGithubAdapter
+from taogod_terminal.adapters.github.static_adapter import StaticGithubAdapter
 
 logger = logging.getLogger(__name__)
 
@@ -77,7 +75,8 @@ def get_subnet_from_channel_name(channel_name: str) -> Optional[int]:
 
 
 def generate_tweets_no_simsearch(subnet_number: int, messages: List[MessageData]) -> List[Tweet]:
-    readme_context = subnet_roadmaps[subnet_number] if subnet_number in subnet_roadmaps else ""
+    github_adapter: BaseGithubAdapter = StaticGithubAdapter()
+    readme_context = github_adapter.get_subnet_roadmap(subnet_number)
     messages_context = ""
 
     truncated_messages: List[MessageData] = messages[:MAX_DISCORD_MESSAGES]
@@ -148,22 +147,12 @@ def convert_generated_tweets_into_structured_output(tweets: List[Tweet]):
         for tweet in tweets
     ]
 
-def no_simsearch_loop(discord_data: DiscordData, output_path: Path = None) -> Dict[int, List[Tweet]]:
+def no_simsearch_loop(subnet_id_to_messages: Dict[int, List[MessageData]], output_path: Path = None) -> Dict[int, List[Tweet]]:
     logger.info(f"Output path is {output_path}")
     script_dir = os.path.dirname(os.path.abspath(__file__))
 
-    channel_name_to_messages: Dict[str, List[MessageData]] = discord_data.guilds[0].channel_name_to_messages
-
     tweets_by_subnet: Dict[int, List[Tweet]] = defaultdict(list)
-    for channel_name, messages in channel_name_to_messages.items():
-        if "ex" in channel_name:
-            continue
-
-        logger.info(f"Trying to parse subnet with channel name '{channel_name}'...")
-        subnet_id = get_subnet_from_channel_name(channel_name)
-        if not subnet_id:
-            continue
-
+    for subnet_id, messages in subnet_id_to_messages.items():
         if len(messages) > 0:
             logger.info(f"Generating tweets for subnet {subnet_id}")
             tweets = generate_tweets_no_simsearch(subnet_id, messages)
@@ -183,7 +172,6 @@ def no_simsearch_loop(discord_data: DiscordData, output_path: Path = None) -> Di
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--discord_file", type=Path, help="Path to Discord JSON file")
     parser.add_argument("--output", type=Path, help="Output file for generated tweets")
     return parser.parse_args()
 
@@ -191,13 +179,11 @@ def parse_args() -> argparse.Namespace:
 async def main() -> Dict[int, List[Tweet]]:
     args = parse_args()
 
-    if args.discord_file:
-        with open(args.discord_file, "r") as f:
-            discord_data = dict_to_dataclass_or_basemodel(DiscordData, json.load(f))
-    else:
-        discord_data = await fetch_discord_info()
+    discord_adapter: BaseDiscordAdapter = V1DiscordAdapter()
+    await discord_adapter.reload_data()
+    subnet_id_to_messages = discord_adapter.get_subnet_message_map()
 
-    return no_simsearch_loop(discord_data, args.output)
+    return no_simsearch_loop(subnet_id_to_messages, args.output)
 
 if __name__ == "__main__":
     asyncio.run(main())
